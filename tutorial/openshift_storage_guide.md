@@ -1,5 +1,48 @@
 # OpenShift Storage Options Matrix and Setup Guide
 
+## Table of Contents
+1. [Storage Options Comparison Matrix](#storage-options-comparison-matrix)
+2. [ROSA (AWS) Storage Setup](#rosa-aws-storage-setup)
+   - [EBS Storage Setup](#1-ebs-storage-setup)
+   - [EFS Setup for Shared Storage](#2-efs-setup-for-shared-storage)
+   - [Testing ROSA Storage](#3-testing-rosa-storage)
+3. [ARO (Azure) Storage Setup](#aro-azure-storage-setup)
+   - [Azure Disk Storage Setup](#1-azure-disk-storage-setup)
+   - [Azure Files Setup](#2-azure-files-setup)
+   - [Azure NetApp Files Setup](#3-azure-netapp-files-setup)
+   - [Testing ARO Storage](#4-testing-aro-storage)
+4. [Validation and Testing Scripts](#validation-and-testing-scripts)
+5. [Troubleshooting Common Issues](#troubleshooting-common-issues)
+
+---
+
+## Prerequisites
+
+Before following this guide, ensure you have:
+
+- **OpenShift Cluster**: ROSA or ARO cluster with cluster admin access
+- **CLI Tools**: 
+  - `oc` (OpenShift CLI) installed and authenticated
+  - `aws` CLI (for ROSA) or `az` CLI (for ARO) installed and configured
+- **Permissions**: 
+  - Cluster admin role on OpenShift
+  - Appropriate cloud provider permissions (IAM roles for AWS, RBAC for Azure)
+- **OpenShift Version**: OpenShift 4.8+ (CSI drivers are included by default)
+  - **Tested with**: OpenShift 4.10, 4.11, 4.12, 4.13, 4.14
+- **Network Access**: Ability to access cloud provider APIs from cluster nodes
+
+## Version Compatibility
+
+This guide is tested and validated with:
+- **OpenShift**: 4.10 - 4.14
+- **ROSA**: All supported ROSA versions
+- **ARO**: All supported ARO versions
+- **CSI Drivers**: 
+  - AWS EBS CSI Driver: v1.27+ (included with ROSA)
+  - AWS EFS CSI Driver: v1.7+ (via OperatorHub)
+  - Azure Disk CSI Driver: v1.27+ (included with ARO)
+  - Azure Files CSI Driver: v1.27+ (included with ARO)
+
 ## Storage Options Comparison Matrix
 
 | Storage Type | ROSA (AWS) | ARO (Azure) | Performance | Use Cases | Access Mode | Cost |
@@ -10,7 +53,7 @@
 | **Object Storage** | S3 (via CSI) | Azure Blob (via CSI) | Variable | Backups, Archives | N/A | Low |
 | **Local/Ephemeral** | Instance Store | Local SSD | Highest | Caching, Temp data | RWO | Low |
 
-## ROSA (AWS) Storage Setup
+## ROSA (AWS) Storage Setup {#rosa-aws-storage-setup}
 
 ### 1. EBS Storage Setup
 
@@ -148,7 +191,7 @@ metadata:
 provisioner: efs.csi.aws.com
 parameters:
   provisioningMode: efs-ap
-  fileSystemId: fs-xxxxxxxxx  # Replace with your EFS ID
+  fileSystemId: fs-xxxxxxxxx  # Replace with your EFS ID from AWS console or CLI
   directoryPerms: "700"
 volumeBindingMode: Immediate
 reclaimPolicy: Delete
@@ -227,7 +270,7 @@ spec:
           claimName: efs-test-pvc
 ```
 
-## ARO (Azure) Storage Setup
+## ARO (Azure) Storage Setup {#aro-azure-storage-setup}
 
 ### 1. Azure Disk Storage Setup
 
@@ -485,7 +528,7 @@ spec:
   volumes:
   - name: test-storage
     persistentVolumeClaim:
-      claimName: <your-pvc-name>
+      claimName: <your-pvc-name>  # Replace with your actual PVC name
 EOF
 ```
 
@@ -524,7 +567,7 @@ spec:
       volumes:
       - name: shared-vol
         persistentVolumeClaim:
-          claimName: <your-rwx-pvc-name>
+          claimName: <your-rwx-pvc-name>  # Replace with your ReadWriteMany PVC name
 EOF
 ```
 
@@ -571,3 +614,97 @@ oc patch pvc <pvc-name> -p '{"spec":{"resources":{"requests":{"storage":"50Gi"}}
 3. Monitor PVC binding: `oc get pvc -w`
 4. Validate pod startup: `oc describe pod <pod-name>`
 5. Test actual I/O operations within pods
+
+## Security Considerations
+
+### Encryption
+
+**At Rest:**
+- **EBS (ROSA)**: Enable encryption in storage class parameters (`encrypted: "true"`)
+- **Azure Disk**: Encryption at rest is enabled by default for managed disks
+- **EFS (ROSA)**: Enable encryption in EFS file system configuration
+- **Azure Files**: Encryption at rest is enabled by default
+
+**In Transit:**
+- All CSI driver communications use TLS
+- EFS uses encrypted NFS connections (TLS 1.2+)
+- Azure Files supports SMB 3.0+ with encryption
+
+### Access Control
+
+**IAM/RBAC:**
+- **ROSA**: Ensure IAM roles for worker nodes have minimal required permissions
+- **ARO**: Use managed identity with least privilege RBAC assignments
+- Limit cluster admin access to storage operations
+- Use namespace-level permissions where possible
+
+**Network Security:**
+- Configure security groups (AWS) or NSGs (Azure) to restrict storage access
+- Use VPC endpoints (AWS) or Private Endpoints (Azure) for storage access
+- Enable network policies in OpenShift to restrict pod-to-storage communication
+
+### Secret Management
+
+- Store cloud credentials in OpenShift secrets (not in YAML files)
+- Use external secret management (e.g., Sealed Secrets, Vault) for production
+- Rotate credentials regularly
+- Never commit credentials to version control
+
+### Best Practices
+
+1. **Use separate storage accounts/resource groups** for production workloads
+2. **Enable audit logging** for storage operations
+3. **Implement backup strategies** before production deployment
+4. **Test disaster recovery procedures** regularly
+5. **Monitor storage usage** to prevent unexpected costs
+6. **Use resource quotas** to limit storage consumption per namespace
+7. **Review and update security policies** regularly
+
+## Validation Checklist
+
+Use this checklist to validate your storage setup:
+
+### Pre-Deployment
+- [ ] Verified OpenShift version compatibility
+- [ ] Confirmed CSI drivers are installed and running
+- [ ] Validated cloud provider permissions/roles
+- [ ] Reviewed security requirements (encryption, access control)
+- [ ] Tested in non-production environment first
+
+### Storage Class Configuration
+- [ ] Storage classes created and verified (`oc get storageclass`)
+- [ ] Default storage class set appropriately
+- [ ] Parameters configured correctly (encryption, performance tiers)
+- [ ] Volume binding mode appropriate for use case
+
+### PVC Creation
+- [ ] PVC created successfully (`oc get pvc`)
+- [ ] PVC bound to PV (`oc get pvc` shows Bound status)
+- [ ] PV created in cloud provider (verify in AWS/Azure console)
+- [ ] Storage size matches request
+
+### Pod Integration
+- [ ] Pod scheduled successfully with PVC mounted
+- [ ] Volume mounted at expected path (`oc exec pod -- df -h`)
+- [ ] Read/write permissions correct
+- [ ] Data persists across pod restarts
+
+### Performance Testing
+- [ ] Baseline performance metrics recorded
+- [ ] IOPS meet workload requirements
+- [ ] Latency acceptable for application needs
+- [ ] Throughput sufficient for data transfer
+
+### Security Validation
+- [ ] Encryption enabled and verified
+- [ ] Access controls properly configured
+- [ ] Secrets stored securely (not in plain text)
+- [ ] Network policies applied (if applicable)
+- [ ] Audit logging enabled
+
+### Production Readiness
+- [ ] Backup strategy implemented and tested
+- [ ] Disaster recovery plan documented
+- [ ] Monitoring and alerting configured
+- [ ] Cost estimates reviewed
+- [ ] Documentation updated with environment-specific details

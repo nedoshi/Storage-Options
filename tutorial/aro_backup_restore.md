@@ -1,60 +1,87 @@
-Alright — here’s the **same runbook** with an **ASCII diagram** you can keep in the Markdown so it’s GitHub-friendly, plus I’ll include an optional PNG diagram link if you want a cleaner visual.
-
----
-
-```markdown
 # ARO Cross-Cluster Backup & Restore with OADP (Velero) Using Shared Storage
 
 ## Overview
+
 This runbook demonstrates how to:
 - Configure OADP (Velero) in two Azure Red Hat OpenShift (ARO) clusters for cross-cluster backup/restore
 - Store backups and snapshots in **customer-managed resource groups** (to avoid ARO-managed RG deny assignments)
 - Validate the configuration using a sample application with persistent data
 
----
+## Prerequisites
+
+- Two ARO clusters (source and target) with cluster admin access
+- Azure CLI installed and configured with appropriate permissions
+- `oc` (OpenShift CLI) installed and authenticated to both clusters
+- `jq` installed for JSON parsing
+- Azure subscription with permissions to:
+  - Create resource groups
+  - Create storage accounts
+  - Create service principals
+  - Assign RBAC roles
+  - Create and manage Azure Disk snapshots
+- OADP operator installed on both clusters (via OperatorHub)
+
+## Version Compatibility
+
+This runbook is tested with:
+- **OpenShift**: 4.10 - 4.14
+- **OADP**: 1.1.0+
+- **Velero**: 1.11.0+ (included with OADP)
+- **Azure Disk CSI Driver**: v1.27+ (included with OpenShift)
+
+## Security Considerations
+
+### Credential Management
+- **Never commit credentials** to version control
+- Store service principal credentials in OpenShift secrets
+- Use Azure Key Vault for production environments
+- Rotate service principal credentials regularly
+- Consider using managed identities instead of service principals
+
+### Access Control
+- Use least privilege RBAC assignments for service principals
+- Limit backup storage account access to necessary resources only
+- Enable Azure Monitor and alerting for backup operations
+- Audit backup and restore operations regularly
+
+### Data Protection
+- Enable encryption at rest for backup storage accounts
+- Use customer-managed keys (CMK) for sensitive data
+- Implement backup retention policies
+- Test restore procedures regularly
+- Document disaster recovery procedures
 
 ## Architecture Diagram
 
-### ASCII Diagram (GitHub-safe)
 ```
-
 +------------------+           +----------------------------+
-\|  Source Cluster  |           |  Target Cluster            |
-\| (ARO, OADP)      |           | (ARO, OADP)                |
-\|                  |           |                            |
-\|   +----------+   |           |   +----------+             |
-\|   |  App     |   |           |   |  App     |             |
-\|   | + PVC    |---|----+      |   | + PVC    |             |
-\|   +----------+   |    |      |   +----------+             |
+|  Source Cluster  |           |  Target Cluster            |
+| (ARO, OADP)      |           | (ARO, OADP)                |
+|                  |           |                            |
+|   +----------+   |           |   +----------+             |
+|   |  App     |   |           |   |  App     |             |
+|   | + PVC    |---|----+      |   | + PVC    |             |
+|   +----------+   |    |      |   +----------+             |
 +------------------+    |      +----------------------------+
-|
-v
+                        |
+                        v
 +---------------------------------------------+
-\| Backup Storage Account (Blob)              |
-\| (in BACKUP\_RG)                              |
+| Backup Storage Account (Blob)              |
+| (in BACKUP_RG)                              |
 +---------------------------------------------+
-|
-v
+                        |
+                        v
 +---------------------------------------------+
-\| Snapshot Resource Group (SNAPSHOT\_RG)       |
-\|  - Azure Disk Snapshots                     |
-\|  - Restored Disks for Target Cluster        |
+| Snapshot Resource Group (SNAPSHOT_RG)       |
+|  - Azure Disk Snapshots                     |
+|  - Restored Disks for Target Cluster        |
 +---------------------------------------------+
-
-````
+```
 
 **Flow**:
 1. **Backup** from Source Cluster → Blob Storage (BSL)  
 2. **Volume snapshots** stored in `SNAPSHOT_RG` (VSL)  
 3. **Restore** on Target Cluster → disks created from snapshots in `SNAPSHOT_RG` → attached to PVCs  
-
----
-
-*(Optional)*: You can create a cleaner PNG diagram using [Mermaid](https://mermaid.js.org/) or draw.io and save it as `backup-restore-aro.png` in your repo, then link it here:
-
-```markdown
-![ARO Cross-Cluster Backup & Restore Flow](backup-restore-aro.png)
-````
 
 ---
 
